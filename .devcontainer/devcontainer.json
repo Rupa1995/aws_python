@@ -1,0 +1,18 @@
+{
+    "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+    "features": {
+        "ghcr.io/devcontainers/features/python:1": {},
+        "ghcr.io/devcontainers/features/aws-cli:1": {}
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "PKief.material-icon-theme",
+                "aaron-bond.better-comments",
+                "ms-python.python",
+                "ms-python.debugpy",
+                "Boto3typed.boto3-ide"
+            ]
+        }
+    }
+}
