@@ -1,0 +1,126 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Cloudformation template to create an eventbridge rule with new SQS
+Resources:
+  TestSQS:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: TestSQSQueue
+      DelaySeconds: 0
+      VisibilityTimeout: 120
+  
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: #The trust policy that is associated with this role. 
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action: 
+              - sts:AssumeRole
+      Path: "/" #The path to the role.
+      Policies: #Adds or updates an inline policy document that is embedded in the specified IAM role.
+        - PolicyName: root
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+              - Effect: Allow
+                Action:
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                  - sqs:ReceiveMessage
+                Resource: !GetAtt TestSQS.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:DescribeStream
+                  - dynamodb:GetRecords
+                  - dynamodb:GetShardIterator
+                  - dynamodb:ListStreams
+                  - dynamodb:PutItem
+                Resource: !GetAtt SampleDDBTable.Arn
+
+  ProcessLambdaEvent:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Runtime: python3.10
+      Timeout: 300
+      Role: !GetAtt LambdaExecutionRole.Arn  
+      #returns the value of an attribute from a resource in the template. 
+      Timeout: 60
+      MemorySize: 512
+      Code:
+        ZipFile: |
+          import logging
+          from datetime import datetime
+          import json
+          import os
+          import boto3
+
+          dynamodb = boto3.resource('dynamodb')
+
+          LOGGER = logging.getLogger()
+          LOGGER.setLevel(logging.INFO)
+
+          def handler(event, context):
+              no_of_msg = str(len(event['Records']))
+              print("Found " +no_of_msg +" messages to process.")
+              print(event['Records'])
+              for rec in event['Records']:
+                data = json.loads(rec['body'])
+                print(data)
+                table = dynamodb.Table('SqsLambdaMsg')
+                response = table.put_item(
+                  Item={
+                    'messageId': rec['messageId'],
+                    'Name': data['Name'],
+                    'Msg': data['Msg'],
+                    'PhoneNo': data['PhoneNo'],
+                    'Timestamp': datetime.now().isoformat()
+                  }
+                )
+                print("Wrote message to DynamoDB:", json.dumps(response))
+              
+
+  LambdaFunctionEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 10
+      Enabled: true
+      EventSourceArn: !GetAtt TestSQS.Arn
+      FunctionName: !GetAtt ProcessLambdaEvent.Arn
+
+  SampleDDBTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: "SqsLambdaMsg"
+      AttributeDefinitions: #list of attributes that describe the key schema for the table and indexes.This property is required to create a DynamoDB table.
+        - AttributeName: "messageId"
+          AttributeType: "S"
+        - AttributeName: "Name"
+          AttributeType: "S"
+        
+      KeySchema:   #specifies the attributes that make up the primary key of a table, or the key attributes of an index.
+        -   AttributeName: "messageId"
+            KeyType: "HASH"       #HASH - partition key #The role that this key attribute will assume
+        -   AttributeName: "Name"
+            KeyType: "RANGE"      #RANGE - sort key
+        
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+
+
+Outputs:
+  TestSQS:
+    Description: SQS ARN created for this example
+    Value: !GetAtt TestSQS.Arn
+  
